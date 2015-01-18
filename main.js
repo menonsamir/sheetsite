@@ -47,44 +47,9 @@ app.get('/authorized', function (req, res) {
       res.redirect('/view');
     }
   });
-})
+});
 
-app.get('/home', function (req, res) {
-  console.log("2");
-  var Spreadsheet = require('edit-google-spreadsheet');
-  Spreadsheet.load({
-    debug: true,
-    spreadsheetName: 'Test',
-    worksheetName: 'Summer',
- /*   // Choose from 1 of the 3 authentication methods:
-    //    1. Username and Password
-    username: 'my-name@google.email.com',
-    password: 'my-5uper-t0p-secret-password',
-    // OR 2. OAuth
-    oauth : {
-      email: 'my-name@google.email.com',
-      keyFile: 'my-private-key.pem'
-    },
-    // OR 3. Token*/
-    accessToken : {
-      type: 'Bearer',
-      token: authTokens.access_token
-    }
-  }, function sheetReady(err, spreadsheet) {
-    console.log("3");
-    if (err)
-      console.error(err);
-    //use speadsheet!
-    spreadsheet.add({ 3: { 5: "hello!" } });
-
-        spreadsheet.send(function(err) {
-          if(err) throw err;
-          res.send("Updated Cell at row 3, column 5 to 'hello!'");
-        });
-  });
-})
-
-app.get('/view', function (req, res) {
+app.get('/view/:spreadsheetName/:worksheetName', function (req, res) {
 
   /*var options = {
     url: "https://spreadsheets.google.com/feeds/spreadsheets/private/full",
@@ -97,33 +62,40 @@ app.get('/view', function (req, res) {
     res.send(body);
   })*/
   var Spreadsheet = require('edit-google-spreadsheet');
+
+  var spreadsheetName = req.params.spreadsheetName || 'Hours (Responses)'
+  var worksheetName = req.params.worksheetName || "Summer";
+
   Spreadsheet.load({
     debug: true,
-    spreadsheetName: 'Hours (Responses)',
-    worksheetName: 'Summer',
+    spreadsheetName: spreadsheetName,
+    worksheetName: worksheetName,
     accessToken : {
       type: 'Bearer',
       token: authTokens.access_token
-    },
-/*    spreadsheetId: "1w5x4fFDc6PGCG0eNNuQCovb2m-0tiqDh7Epb0pIHJIg",
-    worksheetId: "od6"*/
+    }
   }, function sheetReady(err, spreadsheet) {
-    if (err)
-      console.error(err);
-    //use speadsheet
-
+    if (err) throw (err);
     spreadsheet.receive({getValues: true}, function(err, values, info) {
       if(err) throw err;
       spreadsheet.receive({getValues: false}, function(err, formulas, info) {
         if(err) throw err;
-        process(spreadsheet, info, formulas, values, res)
+
+        var info = {
+          spreadsheetName: spreadsheetName,
+          worksheetName: worksheetName,
+          lastRow: info.lastRow
+        }
+
+        var fullData = getFullData(spreadsheet, info, formulas, values, res);
+
+        createForm(spreadsheet, info, fullData, res);
       });
-      // Found rows: { '3': { '5': 'hello!' } }
     });
   });
 });
 
-function process(spreadsheet, info, formulas, values, res) {
+function getFullData(spreadsheet, info, formulas, values, res) {
   var fullData = {};
   for (var row in formulas) {
     fullData[row] = {};
@@ -137,11 +109,10 @@ function process(spreadsheet, info, formulas, values, res) {
     }
   }
 
-  recognizeForm(spreadsheet, info, fullData, res);
+  return fullData;
 }
 
-function recognizeForm(spreadsheet, info, fullData, res) {
-  var title = fullData["1"]["1"].value;
+function createForm(spreadsheet, info, fullData, res) {
   var inputs = [];
   var outputs = [];
 
@@ -158,13 +129,13 @@ function recognizeForm(spreadsheet, info, fullData, res) {
       }
     }
     if (test(row)) {
-        // Must be a calculated value (output)
+        // This row is a calculated value (output)
         outputs.push({
           field: field
         });
         outLocations[field] = {row: r.toString(), column: "2"};
     } else {
-      // Must be an input
+        // This row is an input
       inputs.push({
         field: field,
         type: "text"
@@ -173,7 +144,15 @@ function recognizeForm(spreadsheet, info, fullData, res) {
     }
   }
 
-  app.post("/"+encodeURIComponent(title), function (req, res) {
+  function escapeRegExp(str) {
+    return str.replace(/[\-\[\]\/\{\}\(\)\*\+\?\.\\\^\$\|]/g, "\\$&");
+  }
+
+  var url = new RegExp(escapeRegExp("/view/"+encodeURIComponent(info.spreadsheetName)+"/"+encodeURIComponent(info.worksheetName)));
+  console.log(url);
+
+  app.post(url, function (req, res) {
+    console.log("Recieved");
     var batch = {};
     for (var field in req.body) {
       var value = req.body[field];
@@ -202,7 +181,7 @@ function recognizeForm(spreadsheet, info, fullData, res) {
     });
   });
 
-  res.render("home", {title: encodeURIComponent(title), inputs: inputs})
+  res.render("home", { inputs: inputs})
 
 }
 
